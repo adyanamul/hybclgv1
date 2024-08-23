@@ -91,10 +91,9 @@ def dapatkan_nonce(alamat):
     return int(respon_json["result"], 16)
 
 def kirim_transaksi_dengan_delay(account, nonce, alamat_penerima):
-    jumlah_kirim_acak = decimal.Decimal(random.uniform(0.0001, 0.002))  # Generate a random amount between 0.0001 and 0.002 BTC
+    jumlah_kirim_acak = decimal.Decimal(random.uniform(1000, 1999999))
     jumlah_kirim_acak_wei = int(jumlah_kirim_acak * 10**18)
     
-    # Create the data for the ERC-20 token transfer
     web3 = Web3()
     token_contract = web3.eth.contract(address=Web3.to_checksum_address(TOKEN_CONTRACT_ADDRESS), abi=config["TOKEN_ABI"])
     transfer_function = token_contract.functions.transfer(alamat_penerima, jumlah_kirim_acak_wei)
@@ -111,17 +110,28 @@ def kirim_transaksi_dengan_delay(account, nonce, alamat_penerima):
         'data': data
     }
 
-    transaksi_ttd = Account.sign_transaction(transaksi, account["private_key"])
-    data_transaksi = transaksi_ttd.rawTransaction.hex()
-    data = {"jsonrpc": "2.0", "method": "eth_sendRawTransaction", "params": [data_transaksi], "id": 1}
-    respon_json = permintaan_dengan_pengulangan(data)
-    if "result" in respon_json:
-        return respon_json["result"]
-    elif "error" in respon_json and respon_json["error"]["message"] == "Known transaction":
-        log("Transaction known, proceeding to next transaction.", "WARNING")
-        return None
-    else:
-        raise Exception(respon_json["error"]["message"])
+    try:
+        transaksi_ttd = Account.sign_transaction(transaksi, account["private_key"])
+        data_transaksi = transaksi_ttd.rawTransaction.hex()
+        data = {"jsonrpc": "2.0", "method": "eth_sendRawTransaction", "params": [data_transaksi], "id": 1}
+        respon_json = permintaan_dengan_pengulangan(data)
+        if "result" in respon_json:
+            return respon_json["result"]
+        elif "error" in respon_json and respon_json["error"]["message"] == "replacement transaction underpriced":
+            log("Transaction underpriced, increasing gas price...", "WARNING")
+            transaksi['maxPriorityFeePerGas'] += 1000000000  # Increase by 1 gwei
+            transaksi['maxFeePerGas'] += 1000000000  # Increase by 1 gwei
+            transaksi_ttd = Account.sign_transaction(transaksi, account["private_key"])
+            data_transaksi = transaksi_ttd.rawTransaction.hex()
+            data = {"jsonrpc": "2.0", "method": "eth_sendRawTransaction", "params": [data_transaksi], "id": 1}
+            respon_json = permintaan_dengan_pengulangan(data)
+            return respon_json["result"]
+        else:
+            raise Exception(respon_json["error"]["message"])
+    except Exception as e:
+        log(f"Failed to send transaction: {str(e)}", "ERROR")
+        raise
+
 
 def proses_kirim_transaksi_per_akun(account):
     log(f"===== Starting Transaction Sending for Account {account['address']} =====", "INFO")
